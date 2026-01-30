@@ -11,7 +11,8 @@ export const parseNodeLink = (link: string): NodeConfig | null => {
       return {
         protocol: ProtocolType.VMESS,
         uuid: json.id,
-        host: json.add || '',
+        address: json.add || '',
+        host: json.host || json.add || '',
         port: json.port || 443,
         path: json.path || '/',
         sni: json.sni || json.host || json.add || '',
@@ -34,10 +35,11 @@ export const parseNodeLink = (link: string): NodeConfig | null => {
       return {
         protocol,
         uuid: url.username,
-        host: url.hostname,
+        address: url.hostname,
+        host: searchParams.get('host') || url.hostname,
         port: port,
         path: searchParams.get('path') || '/',
-        sni: searchParams.get('sni') || searchParams.get('peer') || url.hostname,
+        sni: searchParams.get('sni') || searchParams.get('peer') || searchParams.get('host') || url.hostname,
         type: searchParams.get('type') || 'ws',
         security: searchParams.get('security') || 'tls',
         remarks: decodeURIComponent(url.hash.replace('#', '')) || 'Node'
@@ -66,10 +68,8 @@ export const generateSubscriptionUrl = (
   try {
     const baseUrl = workerUrl.startsWith('http') ? workerUrl : `https://${workerUrl}`;
     
-    // 快速密钥模式：直接返回域名+路径 (cmliu 脚本内部 KEY 逻辑)
     if (opts.quickKey) {
       const qUrl = new URL(`${baseUrl.replace(/\/$/, '')}/${opts.quickKey}`);
-      // 密钥模式下同样支持 target 参数
       if (opts.target && opts.target !== 'mixed') {
         qUrl.searchParams.set('target', opts.target);
       }
@@ -80,14 +80,16 @@ export const generateSubscriptionUrl = (
 
     const url = new URL(`${baseUrl}/sub`);
 
-    // 1. 核心认证 (cmliu 脚本根据协议识别 uuid 或 password)
+    // 1. Authentication
     if (config.protocol === ProtocolType.TROJAN) {
       url.searchParams.set('password', config.uuid);
     } else {
       url.searchParams.set('uuid', config.uuid);
     }
 
-    // 2. 基础传输层参数 (显式传递，这是解决 -1 的关键)
+    // 2. Core Transmission (Correct mapping for cmliu Worker)
+    // address is the IP/Connect-Target, host is the WS Host Header
+    url.searchParams.set('address', config.address);
     url.searchParams.set('host', config.host);
     url.searchParams.set('port', config.port.toString());
     url.searchParams.set('path', config.path || '/');
@@ -95,12 +97,12 @@ export const generateSubscriptionUrl = (
     url.searchParams.set('security', config.security || 'tls');
     url.searchParams.set('sni', config.sni || config.host);
 
-    // 3. 特殊协议补全
+    // 3. Protocol specific
     if (config.protocol === ProtocolType.VLESS) {
       url.searchParams.set('encryption', 'none');
     }
 
-    // 4. cmliu 专用顶级扩展参数 (不嵌套在 path 里)
+    // 4. Advanced top-level params for cmliu Worker
     if (opts.proxyip) {
       url.searchParams.set('proxyip', opts.proxyip);
     }
@@ -108,7 +110,7 @@ export const generateSubscriptionUrl = (
       url.searchParams.set('ed', '2560');
     }
 
-    // 5. 客户端/适配参数
+    // 5. Client config
     if (opts.fragment === 'Shadowrocket') {
       url.searchParams.set('fragment', '1,40-60,30-50,tlshello');
     } else if (opts.fragment === 'Happ') {

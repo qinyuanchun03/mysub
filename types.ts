@@ -8,7 +8,8 @@ export enum ProtocolType {
 export interface NodeConfig {
   protocol: ProtocolType;
   uuid: string;
-  host: string;
+  address: string; // The connection IP or domain
+  host: string;    // The WS Host header or Fake Domain
   port: number | string;
   path: string;
   sni: string;
