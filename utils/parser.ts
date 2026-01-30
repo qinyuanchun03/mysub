@@ -32,13 +32,17 @@ export const parseNodeLink = (link: string): NodeConfig | null => {
         port = (protocol === ProtocolType.TROJAN || searchParams.get('security') === 'tls') ? '443' : '80';
       }
 
+      // The 'path' in the link might contain proxyip=...
+      // We extract the base path and later pass proxyip separately if found
+      let rawPath = searchParams.get('path') || '/';
+      
       return {
         protocol,
         uuid: url.username,
         address: url.hostname,
         host: searchParams.get('host') || url.hostname,
         port: port,
-        path: searchParams.get('path') || '/',
+        path: rawPath,
         sni: searchParams.get('sni') || searchParams.get('peer') || searchParams.get('host') || url.hostname,
         type: searchParams.get('type') || 'ws',
         security: searchParams.get('security') || 'tls',
@@ -68,6 +72,7 @@ export const generateSubscriptionUrl = (
   try {
     const baseUrl = workerUrl.startsWith('http') ? workerUrl : `https://${workerUrl}`;
     
+    // Quick Key mode: The path-based approach is best for cmliu's script to bypass Nginx
     if (opts.quickKey) {
       const qUrl = new URL(`${baseUrl.replace(/\/$/, '')}/${opts.quickKey}`);
       if (opts.target && opts.target !== 'mixed') {
@@ -78,6 +83,8 @@ export const generateSubscriptionUrl = (
 
     if (!config) return '';
 
+    // If no Quick Key, we use /sub but we MUST provide the token if the script expects it
+    // Most users use their KEY as the token
     const url = new URL(`${baseUrl}/sub`);
 
     // 1. Authentication
@@ -87,40 +94,33 @@ export const generateSubscriptionUrl = (
       url.searchParams.set('uuid', config.uuid);
     }
 
-    // 2. Core Transmission (Correct mapping for cmliu Worker)
-    // address is the IP/Connect-Target, host is the WS Host Header
+    // 2. Core Transmission
     url.searchParams.set('address', config.address);
     url.searchParams.set('host', config.host);
     url.searchParams.set('port', config.port.toString());
-    url.searchParams.set('path', config.path || '/');
+    url.searchParams.set('path', config.path);
     url.searchParams.set('type', config.type || 'ws');
     url.searchParams.set('security', config.security || 'tls');
     url.searchParams.set('sni', config.sni || config.host);
 
-    // 3. Protocol specific
     if (config.protocol === ProtocolType.VLESS) {
       url.searchParams.set('encryption', 'none');
     }
 
-    // 4. Advanced top-level params for cmliu Worker
+    // 3. Advanced Parameters (cmliu script expects these at top level)
     if (opts.proxyip) {
       url.searchParams.set('proxyip', opts.proxyip);
+    } else if (config.path.includes('proxyip=')) {
+        // Extract proxyip from path if user didn't specify one but it's in the node link
+        const match = config.path.match(/proxyip=([^&]+)/);
+        if (match) url.searchParams.set('proxyip', match[1]);
     }
+
     if (opts.ed0rtt) {
       url.searchParams.set('ed', '2560');
     }
 
-    // 5. Client config
-    if (opts.fragment === 'Shadowrocket') {
-      url.searchParams.set('fragment', '1,40-60,30-50,tlshello');
-    } else if (opts.fragment === 'Happ') {
-      url.searchParams.set('fragment', '3,1,tlshello');
-    }
-
-    if (opts.ech) {
-      url.searchParams.set('ech', 'https://doh.cmliussss.net/CMLiussss');
-    }
-
+    // 4. Client target
     if (opts.target && opts.target !== 'mixed') {
       url.searchParams.set('target', opts.target);
     }
