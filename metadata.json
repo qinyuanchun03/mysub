@@ -1,0 +1,5 @@
+{
+  "name": "CloudNode SubGen Pro",
+  "description": "A professional-grade node subscription generator and management dashboard. Easily convert VMess, VLESS, and Trojan nodes into optimized subscription links with support for preferred IPs and multiple client formats.",
+  "requestFramePermissions": []
+}
