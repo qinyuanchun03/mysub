@@ -11,12 +11,12 @@ export const parseNodeLink = (link: string): NodeConfig | null => {
       return {
         protocol: ProtocolType.VMESS,
         uuid: json.id,
-        host: json.host || json.add || '',
-        port: json.port,
+        host: json.add || '',
+        port: json.port || 443,
         path: json.path || '/',
         sni: json.sni || json.host || json.add || '',
         type: json.net || 'ws',
-        security: json.scy || 'auto',
+        security: json.tls === 'tls' ? 'tls' : 'none',
         remarks: json.ps || 'VMess Node'
       };
     }
@@ -25,11 +25,18 @@ export const parseNodeLink = (link: string): NodeConfig | null => {
       const protocol = trimmedLink.startsWith('vless://') ? ProtocolType.VLESS : ProtocolType.TROJAN;
       const url = new URL(trimmedLink);
       const searchParams = new URLSearchParams(url.search);
+      
+      // 处理 URL.port 为空的情况（URL 对象在默认端口时可能返回空字符串）
+      let port = url.port;
+      if (!port) {
+        port = (protocol === ProtocolType.TROJAN || searchParams.get('security') === 'tls') ? '443' : '80';
+      }
+
       return {
         protocol,
         uuid: url.username,
         host: url.hostname,
-        port: url.port,
+        port: port,
         path: searchParams.get('path') || '/',
         sni: searchParams.get('sni') || url.hostname,
         type: searchParams.get('type') || 'ws',
@@ -38,7 +45,7 @@ export const parseNodeLink = (link: string): NodeConfig | null => {
       };
     }
   } catch (e) {
-    console.error('Parse Error', e);
+    console.error('Node Parse Error:', e);
   }
   return null;
 };
@@ -60,30 +67,39 @@ export const generateSubscriptionUrl = (
     const baseUrl = workerUrl.startsWith('http') ? workerUrl : `https://${workerUrl}`;
     const url = new URL(`${baseUrl}/sub`);
 
-    // 基础鉴权参数
+    // 1. 基础鉴权参数
     if (config.protocol === ProtocolType.TROJAN) {
       url.searchParams.set('password', config.uuid);
     } else {
       url.searchParams.set('uuid', config.uuid);
     }
 
-    // 路径拼接逻辑 (参考脚本: 路径 + 反代参数 + 0-RTT)
-    let finalPath = config.path;
+    // 2. 核心传输参数 (必须显式包含，否则后端 cmliu 脚本会返回 -1)
+    url.searchParams.set('host', config.host);
+    url.searchParams.set('port', config.port.toString());
+    url.searchParams.set('security', config.security || 'tls');
+    url.searchParams.set('sni', config.sni || config.host);
+    url.searchParams.set('type', config.type || 'ws');
+
+    // 3. 路径及增强参数拼接
+    let finalPath = config.path || '/';
+    const pathParams = new URLSearchParams();
+    
     if (opts.proxyip) {
-      const sep = finalPath.endsWith('/') ? '' : '/';
-      finalPath += `${sep}proxyip=${opts.proxyip}`;
+      pathParams.set('proxyip', opts.proxyip);
     }
     if (opts.ed0rtt) {
-      const sep = finalPath.includes('?') ? '&' : '?';
-      finalPath += `${sep}ed=2560`;
+      pathParams.set('ed', '2560');
+    }
+
+    const extraParamsStr = pathParams.toString();
+    if (extraParamsStr) {
+      finalPath += (finalPath.includes('?') ? '&' : '?') + extraParamsStr;
     }
     
-    url.searchParams.set('host', config.host);
     url.searchParams.set('path', finalPath);
-    url.searchParams.set('sni', config.sni || config.host);
-    url.searchParams.set('type', config.type);
 
-    // 高级特性
+    // 4. 高级特性
     if (opts.fragment === 'Shadowrocket') {
       url.searchParams.set('fragment', '1,40-60,30-50,tlshello');
     } else if (opts.fragment === 'Happ') {
@@ -91,7 +107,6 @@ export const generateSubscriptionUrl = (
     }
 
     if (opts.ech) {
-      // 脚本默认 ECH DNS
       url.searchParams.set('ech', 'https://doh.cmliussss.net/CMLiussss');
     }
 
@@ -101,6 +116,7 @@ export const generateSubscriptionUrl = (
 
     return url.toString();
   } catch (e) {
+    console.error('Subscription Generation Error:', e);
     return '';
   }
 };
