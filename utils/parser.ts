@@ -26,7 +26,6 @@ export const parseNodeLink = (link: string): NodeConfig | null => {
       const url = new URL(trimmedLink);
       const searchParams = new URLSearchParams(url.search);
       
-      // 处理 URL.port 为空的情况（URL 对象在默认端口时可能返回空字符串）
       let port = url.port;
       if (!port) {
         port = (protocol === ProtocolType.TROJAN || searchParams.get('security') === 'tls') ? '443' : '80';
@@ -56,32 +55,41 @@ export interface AdvancedOptions {
   fragment?: 'Shadowrocket' | 'Happ' | null;
   ech?: boolean;
   target?: string;
+  quickKey?: string;
 }
 
 export const generateSubscriptionUrl = (
   workerUrl: string,
-  config: NodeConfig,
+  config: NodeConfig | null,
   opts: AdvancedOptions
 ): string => {
   try {
     const baseUrl = workerUrl.startsWith('http') ? workerUrl : `https://${workerUrl}`;
+    
+    // 如果提供了 Quick Key，则生成直连路径
+    if (opts.quickKey) {
+      return `${baseUrl.replace(/\/$/, '')}/${opts.quickKey}`;
+    }
+
+    if (!config) return '';
+
     const url = new URL(`${baseUrl}/sub`);
 
-    // 1. 基础鉴权参数
+    // 1. 基础鉴权参数 (显式传递，防止 -1)
     if (config.protocol === ProtocolType.TROJAN) {
       url.searchParams.set('password', config.uuid);
     } else {
       url.searchParams.set('uuid', config.uuid);
     }
 
-    // 2. 核心传输参数 (必须显式包含，否则后端 cmliu 脚本会返回 -1)
+    // 2. 核心传输参数 (cmliu 脚本生成的订阅若包含 -1，通常是因为这些参数缺失)
     url.searchParams.set('host', config.host);
     url.searchParams.set('port', config.port.toString());
     url.searchParams.set('security', config.security || 'tls');
     url.searchParams.set('sni', config.sni || config.host);
     url.searchParams.set('type', config.type || 'ws');
 
-    // 3. 路径及增强参数拼接
+    // 3. 路径增强逻辑
     let finalPath = config.path || '/';
     const pathParams = new URLSearchParams();
     
@@ -99,7 +107,7 @@ export const generateSubscriptionUrl = (
     
     url.searchParams.set('path', finalPath);
 
-    // 4. 高级特性
+    // 4. 客户端适配参数
     if (opts.fragment === 'Shadowrocket') {
       url.searchParams.set('fragment', '1,40-60,30-50,tlshello');
     } else if (opts.fragment === 'Happ') {
