@@ -37,7 +37,7 @@ export const parseNodeLink = (link: string): NodeConfig | null => {
         host: url.hostname,
         port: port,
         path: searchParams.get('path') || '/',
-        sni: searchParams.get('sni') || url.hostname,
+        sni: searchParams.get('sni') || searchParams.get('peer') || url.hostname,
         type: searchParams.get('type') || 'ws',
         security: searchParams.get('security') || 'tls',
         remarks: decodeURIComponent(url.hash.replace('#', '')) || 'Node'
@@ -66,48 +66,49 @@ export const generateSubscriptionUrl = (
   try {
     const baseUrl = workerUrl.startsWith('http') ? workerUrl : `https://${workerUrl}`;
     
-    // 如果提供了 Quick Key，则生成直连路径
+    // 快速密钥模式：直接返回域名+路径 (cmliu 脚本内部 KEY 逻辑)
     if (opts.quickKey) {
-      return `${baseUrl.replace(/\/$/, '')}/${opts.quickKey}`;
+      const qUrl = new URL(`${baseUrl.replace(/\/$/, '')}/${opts.quickKey}`);
+      // 密钥模式下同样支持 target 参数
+      if (opts.target && opts.target !== 'mixed') {
+        qUrl.searchParams.set('target', opts.target);
+      }
+      return qUrl.toString();
     }
 
     if (!config) return '';
 
     const url = new URL(`${baseUrl}/sub`);
 
-    // 1. 基础鉴权参数 (显式传递，防止 -1)
+    // 1. 核心认证 (cmliu 脚本根据协议识别 uuid 或 password)
     if (config.protocol === ProtocolType.TROJAN) {
       url.searchParams.set('password', config.uuid);
     } else {
       url.searchParams.set('uuid', config.uuid);
     }
 
-    // 2. 核心传输参数 (cmliu 脚本生成的订阅若包含 -1，通常是因为这些参数缺失)
+    // 2. 基础传输层参数 (显式传递，这是解决 -1 的关键)
     url.searchParams.set('host', config.host);
     url.searchParams.set('port', config.port.toString());
+    url.searchParams.set('path', config.path || '/');
+    url.searchParams.set('type', config.type || 'ws');
     url.searchParams.set('security', config.security || 'tls');
     url.searchParams.set('sni', config.sni || config.host);
-    url.searchParams.set('type', config.type || 'ws');
 
-    // 3. 路径增强逻辑
-    let finalPath = config.path || '/';
-    const pathParams = new URLSearchParams();
-    
+    // 3. 特殊协议补全
+    if (config.protocol === ProtocolType.VLESS) {
+      url.searchParams.set('encryption', 'none');
+    }
+
+    // 4. cmliu 专用顶级扩展参数 (不嵌套在 path 里)
     if (opts.proxyip) {
-      pathParams.set('proxyip', opts.proxyip);
+      url.searchParams.set('proxyip', opts.proxyip);
     }
     if (opts.ed0rtt) {
-      pathParams.set('ed', '2560');
+      url.searchParams.set('ed', '2560');
     }
 
-    const extraParamsStr = pathParams.toString();
-    if (extraParamsStr) {
-      finalPath += (finalPath.includes('?') ? '&' : '?') + extraParamsStr;
-    }
-    
-    url.searchParams.set('path', finalPath);
-
-    // 4. 客户端适配参数
+    // 5. 客户端/适配参数
     if (opts.fragment === 'Shadowrocket') {
       url.searchParams.set('fragment', '1,40-60,30-50,tlshello');
     } else if (opts.fragment === 'Happ') {
