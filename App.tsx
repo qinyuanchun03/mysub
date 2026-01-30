@@ -21,7 +21,19 @@ const App: React.FC = () => {
   });
 
   useEffect(() => {
-    setWorkerUrl(APP_CONFIG.DEFAULT_WORKER_DOMAIN);
+    const currentHost = window.location.host;
+    setWorkerUrl(currentHost);
+
+    // 检测路径是否为 UUID
+    const path = window.location.pathname.replace(/^\/|\/$/g, '');
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    
+    if (uuidRegex.test(path)) {
+      setShowGenerator(true);
+      // 根据路径中的 UUID 生成默认节点链接
+      const defaultNode = `vless://${path}@${window.location.hostname}:443?encryption=none&security=tls&type=ws&host=${window.location.hostname}&path=%2F#Auto-Generated`;
+      setNodeLink(defaultNode);
+    }
   }, []);
 
   const handleGenerate = () => {
