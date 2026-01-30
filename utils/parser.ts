@@ -1,32 +1,12 @@
 
 import { ProtocolType, NodeConfig } from '../types';
 
-/**
- * 安全的 Base64 解码，处理填充和 URL 安全字符
- */
-const safeAtob = (str: string): string => {
-  try {
-    // 处理 URL 安全的 Base64
-    let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
-    // 补齐填充符
-    while (base64.length % 4 !== 0) {
-      base64 += '=';
-    }
-    return atob(base64);
-  } catch (e) {
-    console.error('Base64 解码失败:', e);
-    return '';
-  }
-};
-
 export const parseNodeLink = (link: string): NodeConfig | null => {
   try {
     const trimmedLink = link.trim();
     if (trimmedLink.startsWith('vmess://')) {
       const base64Content = trimmedLink.replace('vmess://', '');
-      const decoded = safeAtob(base64Content);
-      if (!decoded) return null;
-      
+      const decoded = atob(base64Content.replace(/-/g, '+').replace(/_/g, '/'));
       const json = JSON.parse(decoded);
       return {
         protocol: ProtocolType.VMESS,
@@ -37,71 +17,90 @@ export const parseNodeLink = (link: string): NodeConfig | null => {
         sni: json.sni || json.host || json.add || '',
         type: json.net || 'ws',
         security: json.scy || 'auto',
-        alterId: json.aid || 0,
-        remarks: json.ps || 'New VMess'
+        remarks: json.ps || 'VMess Node'
       };
     }
 
     if (trimmedLink.startsWith('vless://') || trimmedLink.startsWith('trojan://')) {
       const protocol = trimmedLink.startsWith('vless://') ? ProtocolType.VLESS : ProtocolType.TROJAN;
       const url = new URL(trimmedLink);
-      const uuid = url.username;
-      const host = url.hostname;
-      const port = url.port;
       const searchParams = new URLSearchParams(url.search);
-      const remarks = decodeURIComponent(url.hash.replace('#', '')) || 'New Node';
-
       return {
         protocol,
-        uuid,
-        host,
-        port,
+        uuid: url.username,
+        host: url.hostname,
+        port: url.port,
         path: searchParams.get('path') || '/',
-        sni: searchParams.get('sni') || host,
+        sni: searchParams.get('sni') || url.hostname,
         type: searchParams.get('type') || 'ws',
         security: searchParams.get('security') || 'tls',
-        remarks
+        remarks: decodeURIComponent(url.hash.replace('#', '')) || 'Node'
       };
     }
-  } catch (error) {
-    console.error('解析节点失败:', error);
+  } catch (e) {
+    console.error('Parse Error', e);
   }
   return null;
 };
 
+export interface AdvancedOptions {
+  proxyip?: string;
+  ed0rtt?: boolean;
+  fragment?: 'Shadowrocket' | 'Happ' | null;
+  ech?: boolean;
+  target?: string;
+}
+
 export const generateSubscriptionUrl = (
   workerUrl: string,
   config: NodeConfig,
-  options: { proxyip?: boolean; scv?: boolean }
+  opts: AdvancedOptions
 ): string => {
   try {
-    const base = workerUrl.endsWith('/') ? workerUrl.slice(0, -1) : workerUrl;
-    // 确保 URL 格式正确
-    const baseUrl = base.startsWith('http') ? base : `https://${base}`;
+    const baseUrl = workerUrl.startsWith('http') ? workerUrl : `https://${workerUrl}`;
     const url = new URL(`${baseUrl}/sub`);
-    
+
+    // 基础鉴权参数
     if (config.protocol === ProtocolType.TROJAN) {
       url.searchParams.set('password', config.uuid);
     } else {
       url.searchParams.set('uuid', config.uuid);
     }
 
-    url.searchParams.set('host', config.host);
-    url.searchParams.set('path', config.path);
-    url.searchParams.set('sni', config.sni);
-    url.searchParams.set('type', config.type);
+    // 路径拼接逻辑 (参考脚本: 路径 + 反代参数 + 0-RTT)
+    let finalPath = config.path;
+    if (opts.proxyip) {
+      const sep = finalPath.endsWith('/') ? '' : '/';
+      finalPath += `${sep}proxyip=${opts.proxyip}`;
+    }
+    if (opts.ed0rtt) {
+      const sep = finalPath.includes('?') ? '&' : '?';
+      finalPath += `${sep}ed=2560`;
+    }
     
-    if (config.protocol === ProtocolType.VMESS) {
-      url.searchParams.set('alterid', String(config.alterId || 0));
-      url.searchParams.set('security', config.security || 'auto');
+    url.searchParams.set('host', config.host);
+    url.searchParams.set('path', finalPath);
+    url.searchParams.set('sni', config.sni || config.host);
+    url.searchParams.set('type', config.type);
+
+    // 高级特性
+    if (opts.fragment === 'Shadowrocket') {
+      url.searchParams.set('fragment', '1,40-60,30-50,tlshello');
+    } else if (opts.fragment === 'Happ') {
+      url.searchParams.set('fragment', '3,1,tlshello');
     }
 
-    if (options.proxyip) url.searchParams.set('proxyip', 'true');
-    if (options.scv) url.searchParams.set('scv', 'true');
+    if (opts.ech) {
+      // 脚本默认 ECH DNS
+      url.searchParams.set('ech', 'https://doh.cmliussss.net/CMLiussss');
+    }
+
+    if (opts.target && opts.target !== 'mixed') {
+      url.searchParams.set('target', opts.target);
+    }
 
     return url.toString();
   } catch (e) {
-    console.error('生成链接失败:', e);
     return '';
   }
 };
